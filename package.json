@@ -1,0 +1,65 @@
+{
+  "name": "hackillinois-coding-challenge",
+  "version": "1.0.0",
+  "description": "Transaction-safe volunteer shift signup API built with Express, TypeScript, and MongoDB",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "typecheck:tests": "tsc --project tsconfig.test.json --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "verify": "npm run typecheck && npm run typecheck:tests && npm run typecheck:dashboard && npm test && npm run format:check && npm run build && npm run build:dashboard",
+    "seed:demo": "tsx src/scripts/seed-demo.ts",
+    "dev": "tsx watch src/server.ts",
+    "dev:dashboard": "vite --config vite.dashboard.config.ts",
+    "demo": "concurrently --kill-others -n API,DASHBOARD -c blue,magenta \"npm:dev\" \"npm:dev:dashboard\"",
+    "typecheck:dashboard": "tsc --project tsconfig.dashboard.json --noEmit",
+    "build:dashboard": "vite build --config vite.dashboard.config.ts",
+    "preview:dashboard": "vite preview --config vite.dashboard.config.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KhaoYang/hackillinois-coding-challenge.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/KhaoYang/hackillinois-coding-challenge/issues"
+  },
+  "homepage": "https://github.com/KhaoYang/hackillinois-coding-challenge#readme",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mongodb": "^7.6.0",
+    "mongoose": "^9.9.5",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "swagger-ui-express": "^5.0.1",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@types/supertest": "^7.2.1",
+    "@types/swagger-ui-express": "^4.1.8",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "mongodb-memory-server": "^11.2.0",
+    "prettier": "^3.9.6",
+    "supertest": "^7.2.2",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0"
+  }
+}
