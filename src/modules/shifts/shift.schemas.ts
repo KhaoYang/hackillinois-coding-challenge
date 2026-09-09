@@ -14,6 +14,7 @@ const titleSchema = z.string().trim().min(2).max(100);
 const descriptionSchema = z.string().trim().min(1).max(1_000);
 const locationSchema = z.string().trim().min(2).max(150);
 const capacitySchema = z.number().int().min(1).max(10_000);
+const minimumStaffSchema = z.number().int().min(1).max(10_000);
 
 export const shiftStatusSchema = z.enum(SHIFT_STATUSES);
 
@@ -25,6 +26,7 @@ export const createShiftBodySchema = z
     startAt: dateTimeSchema,
     endAt: dateTimeSchema,
     capacity: capacitySchema,
+    minimumStaff: minimumStaffSchema.default(1),
     status: z.enum(["DRAFT", "OPEN"]).default("DRAFT"),
   })
   .strict()
@@ -34,6 +36,14 @@ export const createShiftBodySchema = z
         code: "custom",
         path: ["endAt"],
         message: "Shift end time must be after its start time",
+      });
+    }
+
+    if (shift.minimumStaff > shift.capacity) {
+      context.addIssue({
+        code: "custom",
+        path: ["minimumStaff"],
+        message: "Minimum staff cannot be greater than shift capacity",
       });
     }
   });
@@ -46,6 +56,7 @@ export const updateShiftBodySchema = z
     startAt: dateTimeSchema.optional(),
     endAt: dateTimeSchema.optional(),
     capacity: capacitySchema.optional(),
+    minimumStaff: minimumStaffSchema.optional(),
     status: shiftStatusSchema.optional(),
   })
   .strict()
@@ -62,6 +73,18 @@ export const updateShiftBodySchema = z
         code: "custom",
         path: ["endAt"],
         message: "Shift end time must be after its start time",
+      });
+    }
+
+    if (
+      update.minimumStaff !== undefined &&
+      update.capacity !== undefined &&
+      update.minimumStaff > update.capacity
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["minimumStaff"],
+        message: "Minimum staff cannot be greater than shift capacity",
       });
     }
   });
@@ -91,6 +114,24 @@ export const listShiftsQuerySchema = z
     }
   });
 
+export const understaffedShiftsQuerySchema = z
+  .object({
+    from: dateTimeSchema.optional(),
+    to: dateTimeSchema.optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+  })
+  .strict()
+  .superRefine((query, context) => {
+    if (query.from && query.to && query.to <= query.from) {
+      context.addIssue({
+        code: "custom",
+        path: ["to"],
+        message: "The to timestamp must be after the from timestamp",
+      });
+    }
+  });
+
 export const createShiftRequest = {
   body: createShiftBodySchema,
 } satisfies RequestSchemas;
@@ -101,6 +142,10 @@ export const getShiftRequest = {
 
 export const listShiftsRequest = {
   query: listShiftsQuerySchema,
+} satisfies RequestSchemas;
+
+export const understaffedShiftsRequest = {
+  query: understaffedShiftsQuerySchema,
 } satisfies RequestSchemas;
 
 export const updateShiftRequest = {
@@ -115,3 +160,6 @@ export const deleteShiftRequest = {
 export type CreateShiftInput = z.infer<typeof createShiftBodySchema>;
 export type UpdateShiftInput = z.infer<typeof updateShiftBodySchema>;
 export type ListShiftsQuery = z.infer<typeof listShiftsQuerySchema>;
+export type UnderstaffedShiftsQuery = z.infer<
+  typeof understaffedShiftsQuerySchema
+>;

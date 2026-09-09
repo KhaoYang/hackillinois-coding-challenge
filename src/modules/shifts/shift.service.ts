@@ -1,15 +1,11 @@
 import mongoose, { type QueryFilter } from "mongoose";
 import { AppError } from "../../errors/app-error.js";
 import { SignupModel } from "../signups/signup.model.js";
-import {
-  ShiftModel,
-  type Shift,
-  type ShiftDocument,
-  type ShiftStatus,
-} from "./shift.model.js";
+import { ShiftModel, type Shift, type ShiftStatus } from "./shift.model.js";
 import type {
   CreateShiftInput,
   ListShiftsQuery,
+  UnderstaffedShiftsQuery,
   UpdateShiftInput,
 } from "./shift.schemas.js";
 
@@ -21,8 +17,10 @@ export interface ShiftResponse {
   startAt: string;
   endAt: string;
   capacity: number;
+  minimumStaff: number;
   confirmedCount: number;
   spotsRemaining: number;
+  staffNeeded: number;
   status: ShiftStatus;
   createdAt: string;
   updatedAt: string;
@@ -38,6 +36,26 @@ export interface ShiftListResponse {
   };
 }
 
+interface ShiftResponseSource {
+  _id: mongoose.Types.ObjectId;
+  title: string;
+  description: string;
+  location: string;
+  startAt: Date;
+  endAt: Date;
+  capacity: number;
+  minimumStaff: number;
+  confirmedCount: number;
+  status: ShiftStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface UnderstaffedFacet {
+  items: ShiftResponseSource[];
+  metadata: Array<{ totalItems: number }>;
+}
+
 const allowedTransitions: Record<ShiftStatus, readonly ShiftStatus[]> = {
   DRAFT: ["DRAFT", "OPEN", "CANCELLED"],
   OPEN: ["OPEN", "CLOSED", "CANCELLED"],
@@ -45,7 +63,9 @@ const allowedTransitions: Record<ShiftStatus, readonly ShiftStatus[]> = {
   CANCELLED: ["CANCELLED"],
 };
 
-function toShiftResponse(shift: ShiftDocument): ShiftResponse {
+function toShiftResponse(shift: ShiftResponseSource): ShiftResponse {
+  const minimumStaff = shift.minimumStaff ?? 1;
+
   return {
     id: shift._id.toString(),
     title: shift.title,
@@ -54,8 +74,10 @@ function toShiftResponse(shift: ShiftDocument): ShiftResponse {
     startAt: shift.startAt.toISOString(),
     endAt: shift.endAt.toISOString(),
     capacity: shift.capacity,
+    minimumStaff,
     confirmedCount: shift.confirmedCount,
     spotsRemaining: Math.max(shift.capacity - shift.confirmedCount, 0),
+    staffNeeded: Math.max(minimumStaff - shift.confirmedCount, 0),
     status: shift.status,
     createdAt: shift.createdAt.toISOString(),
     updatedAt: shift.updatedAt.toISOString(),
@@ -135,6 +157,65 @@ export async function listShifts(
   };
 }
 
+export async function listUnderstaffedShifts(
+  query: UnderstaffedShiftsQuery,
+): Promise<ShiftListResponse> {
+  const now = new Date();
+  const startAt: Record<string, Date> = { $gt: now };
+
+  if (query.to) {
+    startAt.$lt = query.to;
+  }
+
+  const match: Record<string, unknown> = {
+    status: "OPEN",
+    startAt,
+  };
+
+  if (query.from) {
+    match.endAt = { $gt: query.from };
+  }
+
+  const skip = (query.page - 1) * query.limit;
+
+  // Larger gaps appear first so organizers can address the most urgent
+  // staffing needs before moving down the event schedule.
+  const [result] = await ShiftModel.aggregate<UnderstaffedFacet>([
+    { $match: match },
+    {
+      $set: {
+        // The fallback makes the endpoint safe for records created before the
+        // minimumStaff field was introduced.
+        minimumStaff: { $ifNull: ["$minimumStaff", 1] },
+        staffNeeded: {
+          $subtract: [{ $ifNull: ["$minimumStaff", 1] }, "$confirmedCount"],
+        },
+      },
+    },
+    { $match: { staffNeeded: { $gt: 0 } } },
+    { $sort: { staffNeeded: -1, startAt: 1, _id: 1 } },
+    {
+      $facet: {
+        items: [{ $skip: skip }, { $limit: query.limit }],
+        metadata: [{ $count: "totalItems" }],
+      },
+    },
+  ]);
+
+  const items = result?.items ?? [];
+  const totalItems = result?.metadata[0]?.totalItems ?? 0;
+
+  return {
+    items: items.map(toShiftResponse),
+    pagination: {
+      page: query.page,
+      limit: query.limit,
+      totalItems,
+      totalPages: Math.ceil(totalItems / query.limit),
+    },
+  };
+}
+
 export async function updateShift(
   shiftId: string,
   input: UpdateShiftInput,
@@ -186,6 +267,7 @@ export async function updateShift(
     const nextStartAt = input.startAt ?? shift.startAt;
     const nextEndAt = input.endAt ?? shift.endAt;
     const nextCapacity = input.capacity ?? shift.capacity;
+    const nextMinimumStaff = input.minimumStaff ?? shift.minimumStaff;
 
     if (nextEndAt <= nextStartAt) {
       throw new AppError(
@@ -200,6 +282,14 @@ export async function updateShift(
         409,
         "CAPACITY_BELOW_SIGNUPS",
         "Capacity cannot be lower than the confirmed signup count",
+      );
+    }
+
+    if (nextMinimumStaff > nextCapacity) {
+      throw new AppError(
+        409,
+        "MINIMUM_STAFF_EXCEEDS_CAPACITY",
+        "Minimum staff cannot be greater than shift capacity",
       );
     }
 

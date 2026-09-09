@@ -5,6 +5,7 @@ import {
   deleteShiftRequest,
   getShiftRequest,
   listShiftsRequest,
+  understaffedShiftsRequest,
   updateShiftRequest,
 } from "./shift.schemas.js";
 import {
@@ -12,6 +13,7 @@ import {
   deleteShift,
   getShiftById,
   listShifts,
+  listUnderstaffedShifts,
   updateShift,
 } from "./shift.service.js";
 
@@ -25,6 +27,19 @@ export const createShiftController: RequestHandler = async (_req, res) => {
 export const listShiftsController: RequestHandler = async (_req, res) => {
   const { query } = getValidatedRequest<typeof listShiftsRequest>(res);
   const result = await listShifts(query);
+
+  res.status(200).json({
+    data: result.items,
+    pagination: result.pagination,
+  });
+};
+
+export const listUnderstaffedShiftsController: RequestHandler = async (
+  _req,
+  res,
+) => {
+  const { query } = getValidatedRequest<typeof understaffedShiftsRequest>(res);
+  const result = await listUnderstaffedShifts(query);
 
   res.status(200).json({
     data: result.items,

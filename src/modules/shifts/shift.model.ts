@@ -40,6 +40,13 @@ const shiftSchema = new Schema(
       min: 1,
       max: 10_000,
     },
+    minimumStaff: {
+      type: Number,
+      required: true,
+      default: 1,
+      min: 1,
+      max: 10_000,
+    },
     confirmedCount: {
       type: Number,
       required: true,
@@ -70,6 +77,13 @@ shiftSchema.pre("validate", function () {
     this.invalidate(
       "capacity",
       "Capacity cannot be lower than the confirmed signup count",
+    );
+  }
+
+  if (this.minimumStaff > this.capacity) {
+    this.invalidate(
+      "minimumStaff",
+      "Minimum staff cannot be greater than shift capacity",
     );
   }
 });

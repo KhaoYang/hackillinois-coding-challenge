@@ -5,6 +5,7 @@ import {
   deleteShiftController,
   getShiftController,
   listShiftsController,
+  listUnderstaffedShiftsController,
   updateShiftController,
 } from "./shift.controller.js";
 import {
@@ -12,6 +13,7 @@ import {
   deleteShiftRequest,
   getShiftRequest,
   listShiftsRequest,
+  understaffedShiftsRequest,
   updateShiftRequest,
 } from "./shift.schemas.js";
 
@@ -23,6 +25,13 @@ shiftRouter.post(
   createShiftController,
 );
 shiftRouter.get("/", validateRequest(listShiftsRequest), listShiftsController);
+// Keep static routes above /:shiftId so Express does not interpret
+// "understaffed" as a MongoDB ObjectId.
+shiftRouter.get(
+  "/understaffed",
+  validateRequest(understaffedShiftsRequest),
+  listUnderstaffedShiftsController,
+);
 shiftRouter.get(
   "/:shiftId",
   validateRequest(getShiftRequest),
