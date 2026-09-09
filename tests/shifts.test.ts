@@ -23,6 +23,7 @@ function createShiftPayload(
     startAt: isoHoursFromNow(2),
     endAt: isoHoursFromNow(4),
     capacity: 4,
+    minimumStaff: 2,
     status: "DRAFT",
     ...overrides,
   };
@@ -53,8 +54,10 @@ describe("Shift routes", () => {
       expect(response.body.data).toMatchObject({
         title: "Registration Desk",
         capacity: 4,
+        minimumStaff: 2,
         confirmedCount: 0,
         spotsRemaining: 4,
+        staffNeeded: 2,
         status: "DRAFT",
       });
     });
@@ -75,6 +78,20 @@ describe("Shift routes", () => {
       expect(response.body.error.details).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "body.endAt" }),
+        ]),
+      );
+    });
+
+    it("rejects a minimum staffing target above capacity", async () => {
+      const response = await request(app)
+        .post("/api/v1/shifts")
+        .send(createShiftPayload({ capacity: 3, minimumStaff: 4 }));
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+      expect(response.body.error.details).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: "body.minimumStaff" }),
         ]),
       );
     });
@@ -122,6 +139,61 @@ describe("Shift routes", () => {
     });
   });
 
+  describe("GET /api/v1/shifts/understaffed", () => {
+    it("returns actionable shifts ordered by the largest staffing gap", async () => {
+      await ShiftModel.create([
+        {
+          ...createShiftPayload({
+            title: "Urgent Coverage",
+            status: "OPEN",
+            capacity: 6,
+            minimumStaff: 4,
+          }),
+          confirmedCount: 1,
+        },
+        {
+          ...createShiftPayload({
+            title: "One More Needed",
+            status: "OPEN",
+            minimumStaff: 2,
+          }),
+          confirmedCount: 1,
+        },
+        {
+          ...createShiftPayload({
+            title: "Already Covered",
+            status: "OPEN",
+            minimumStaff: 2,
+          }),
+          confirmedCount: 2,
+        },
+        {
+          ...createShiftPayload({
+            title: "Draft Coverage",
+            status: "DRAFT",
+            capacity: 5,
+            minimumStaff: 5,
+          }),
+          confirmedCount: 0,
+        },
+      ]);
+
+      const response = await request(app).get("/api/v1/shifts/understaffed");
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toHaveLength(2);
+      expect(
+        response.body.data.map((shift: { title: string }) => shift.title),
+      ).toEqual(["Urgent Coverage", "One More Needed"]);
+      expect(response.body.data[0]).toMatchObject({
+        minimumStaff: 4,
+        confirmedCount: 1,
+        staffNeeded: 3,
+      });
+      expect(response.body.pagination.totalItems).toBe(2);
+    });
+  });
+
   describe("PATCH /api/v1/shifts/:shiftId", () => {
     it("enforces allowed lifecycle transitions", async () => {
       const created = await request(app)
@@ -142,6 +214,19 @@ describe("Shift routes", () => {
 
       expect(reopenedAsDraft.status).toBe(409);
       expect(reopenedAsDraft.body.error.code).toBe("INVALID_SHIFT_TRANSITION");
+    });
+
+    it("does not allow capacity below the minimum staffing target", async () => {
+      const created = await request(app)
+        .post("/api/v1/shifts")
+        .send(createShiftPayload({ capacity: 4, minimumStaff: 3 }));
+
+      const response = await request(app)
+        .patch(`/api/v1/shifts/${created.body.data.id as string}`)
+        .send({ capacity: 2 });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe("MINIMUM_STAFF_EXCEEDS_CAPACITY");
     });
   });
 
