@@ -74,6 +74,7 @@ const demoShifts = [
     startAt: futureDate(30, 15),
     endAt: futureDate(30, 17),
     capacity: 3,
+    minimumStaff: 3,
     status: "OPEN" as const,
   },
   {
@@ -83,6 +84,7 @@ const demoShifts = [
     startAt: futureDate(30, 18),
     endAt: futureDate(30, 20),
     capacity: 2,
+    minimumStaff: 2,
     status: "OPEN" as const,
   },
   {
@@ -92,6 +94,7 @@ const demoShifts = [
     startAt: futureDate(30, 18, 30),
     endAt: futureDate(30, 19, 30),
     capacity: 4,
+    minimumStaff: 3,
     status: "OPEN" as const,
   },
   {
@@ -101,6 +104,7 @@ const demoShifts = [
     startAt: futureDate(30, 21),
     endAt: futureDate(30, 22),
     capacity: 1,
+    minimumStaff: 1,
     status: "OPEN" as const,
   },
   {
@@ -110,6 +114,7 @@ const demoShifts = [
     startAt: futureDate(31, 14),
     endAt: futureDate(31, 16),
     capacity: 3,
+    minimumStaff: 2,
     status: "OPEN" as const,
   },
 ];
@@ -178,7 +183,9 @@ async function seedDemo(): Promise<void> {
 
     console.log("\nSuggested demonstrations:");
     console.log("  1. List OPEN shifts.");
-    console.log("  2. List undercommitted SYSTEMS staff.");
+    console.log(
+      "  2. List understaffed shifts and undercommitted SYSTEMS staff.",
+    );
     console.log(
       "  3. Try adding Priya to Sponsor Booth Support again (idempotency).",
     );

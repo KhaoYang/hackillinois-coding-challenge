@@ -60,6 +60,9 @@ export const dashboardApi = {
 
   shifts: () => apiRequest<ListResponse<Shift>>("/api/v1/shifts?limit=100"),
 
+  understaffedShifts: () =>
+    apiRequest<ListResponse<Shift>>("/api/v1/shifts/understaffed?limit=100"),
+
   shiftSignups: (shiftId: string) =>
     apiRequest<ListResponse<Signup>>(
       `/api/v1/shifts/${shiftId}/signups?status=CONFIRMED&limit=100`,

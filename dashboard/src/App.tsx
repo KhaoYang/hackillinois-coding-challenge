@@ -162,6 +162,7 @@ function App() {
     UndercommittedVolunteer[]
   >([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
+  const [understaffedShiftCount, setUnderstaffedShiftCount] = useState(0);
   const [signups, setSignups] = useState<Signup[]>([]);
   const [selectedShiftId, setSelectedShiftId] = useState("");
   const [selectedVolunteerId, setSelectedVolunteerId] = useState("");
@@ -181,18 +182,25 @@ function App() {
     if (!quiet) setLoading(true);
 
     try {
-      const [health, volunteerResponse, underResponse, shiftResponse] =
-        await Promise.all([
-          dashboardApi.health(),
-          dashboardApi.volunteers(),
-          dashboardApi.undercommitted(),
-          dashboardApi.shifts(),
-        ]);
+      const [
+        health,
+        volunteerResponse,
+        underResponse,
+        shiftResponse,
+        understaffedResponse,
+      ] = await Promise.all([
+        dashboardApi.health(),
+        dashboardApi.volunteers(),
+        dashboardApi.undercommitted(),
+        dashboardApi.shifts(),
+        dashboardApi.understaffedShifts(),
+      ]);
 
       setApiOnline(health.data.status === "ok");
       setVolunteers(volunteerResponse.data);
       setUndercommitted(underResponse.data);
       setShifts(shiftResponse.data);
+      setUnderstaffedShiftCount(understaffedResponse.pagination.totalItems);
       setSelectedShiftId((current) => {
         if (shiftResponse.data.some((shift) => shift.id === current)) {
           return current;
@@ -286,10 +294,6 @@ function App() {
     (total, shift) => total + shift.confirmedCount,
     0,
   );
-  const openSpots = shifts
-    .filter((shift) => shift.status === "OPEN")
-    .reduce((total, shift) => total + shift.spotsRemaining, 0);
-
   async function handleSignup() {
     if (!selectedShift || !selectedVolunteerId) return;
     setSaving(true);
@@ -424,10 +428,10 @@ function App() {
               <Icon name="check" />
             </span>
             <div>
-              <small>OPEN SPOTS</small>
-              <strong>{openSpots}</strong>
+              <small>NEEDS COVERAGE</small>
+              <strong>{understaffedShiftCount}</strong>
             </div>
-            <p>Still available to staff</p>
+            <p>Open shifts below minimum</p>
           </article>
           <article className="metric-card accent-coral">
             <span className="metric-icon">
@@ -523,7 +527,11 @@ function App() {
                         <i>
                           <b style={{ width: `${fill}%` }} />
                         </i>
-                        <small>{shift.spotsRemaining} open</small>
+                        <small>
+                          {shift.staffNeeded > 0
+                            ? `${shift.staffNeeded} needed`
+                            : `${shift.spotsRemaining} open`}
+                        </small>
                       </span>
                       <Icon name="chevron" size={17} />
                     </button>

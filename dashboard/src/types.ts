@@ -33,8 +33,10 @@ export interface Shift {
   startAt: string;
   endAt: string;
   capacity: number;
+  minimumStaff: number;
   confirmedCount: number;
   spotsRemaining: number;
+  staffNeeded: number;
   status: ShiftStatus;
   createdAt: string;
   updatedAt: string;
