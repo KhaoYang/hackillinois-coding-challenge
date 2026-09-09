@@ -211,6 +211,7 @@ export const openApiDocument = {
                 startAt: "2030-02-23T15:00:00.000Z",
                 endAt: "2030-02-23T17:00:00.000Z",
                 capacity: 4,
+                minimumStaff: 2,
                 status: "OPEN",
               },
             },
@@ -249,6 +250,33 @@ export const openApiDocument = {
         ],
         responses: {
           "200": jsonResponse("Matching shifts.", {
+            $ref: "#/components/schemas/ShiftListEnvelope",
+          }),
+          "400": errorResponse("One or more query parameters are invalid."),
+        },
+      },
+    },
+    "/api/v1/shifts/understaffed": {
+      get: {
+        tags: ["Shifts"],
+        summary: "List open shifts below minimum staffing",
+        description:
+          "Returns future OPEN shifts where confirmedCount is below minimumStaff, ordered by the largest staffing gap. Time filters use interval intersection.",
+        parameters: [
+          {
+            name: "from",
+            in: "query",
+            schema: { type: "string", format: "date-time" },
+          },
+          {
+            name: "to",
+            in: "query",
+            schema: { type: "string", format: "date-time" },
+          },
+          ...paginationParameters,
+        ],
+        responses: {
+          "200": jsonResponse("Understaffed shifts.", {
             $ref: "#/components/schemas/ShiftListEnvelope",
           }),
           "400": errorResponse("One or more query parameters are invalid."),
@@ -476,6 +504,13 @@ export const openApiDocument = {
           startAt: { type: "string", format: "date-time" },
           endAt: { type: "string", format: "date-time" },
           capacity: { type: "integer", minimum: 1, maximum: 10000 },
+          minimumStaff: {
+            type: "integer",
+            minimum: 1,
+            maximum: 10000,
+            default: 1,
+            description: "Required coverage target; cannot exceed capacity.",
+          },
           status: {
             type: "string",
             enum: ["DRAFT", "OPEN"],
@@ -494,6 +529,7 @@ export const openApiDocument = {
           startAt: { type: "string", format: "date-time" },
           endAt: { type: "string", format: "date-time" },
           capacity: { type: "integer", minimum: 1, maximum: 10000 },
+          minimumStaff: { type: "integer", minimum: 1, maximum: 10000 },
           status: { $ref: "#/components/schemas/ShiftStatus" },
         },
       },
@@ -507,8 +543,10 @@ export const openApiDocument = {
           "startAt",
           "endAt",
           "capacity",
+          "minimumStaff",
           "confirmedCount",
           "spotsRemaining",
+          "staffNeeded",
           "status",
           "createdAt",
           "updatedAt",
@@ -521,8 +559,14 @@ export const openApiDocument = {
           startAt: { type: "string", format: "date-time" },
           endAt: { type: "string", format: "date-time" },
           capacity: { type: "integer" },
+          minimumStaff: { type: "integer" },
           confirmedCount: { type: "integer" },
           spotsRemaining: { type: "integer" },
+          staffNeeded: {
+            type: "integer",
+            description:
+              "Additional confirmed staff needed to meet minimumStaff.",
+          },
           status: { $ref: "#/components/schemas/ShiftStatus" },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" },

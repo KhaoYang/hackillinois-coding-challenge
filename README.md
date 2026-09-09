@@ -13,6 +13,7 @@ scope of this coding challenge.
 - Idempotent signup and cancellation operations
 - Prevention of overlapping volunteer shifts
 - Undercommitment reporting for staff who still owe required shifts
+- Understaffing reporting for open shifts below their coverage target
 - MongoDB transactions that prevent concurrent overbooking
 - Consistent JSON errors and pagination responses
 - Integration tests against a temporary MongoDB replica set
@@ -64,9 +65,10 @@ Open the primary visual demo at:
 http://localhost:5173
 ```
 
-The dashboard uses the real API to show capacity, team commitments, current
-assignments, and remaining shift requirements. Select a shift to add or remove
-staff; capacity and time-conflict errors are displayed directly in the UI.
+The dashboard uses the real API to show capacity, minimum staffing coverage,
+team commitments, current assignments, and remaining shift requirements.
+Select a shift to add or remove staff; capacity and time-conflict errors are
+displayed directly in the UI.
 
 Interactive API documentation remains available at:
 
@@ -105,8 +107,10 @@ not restrict shift eligibility.
 
 ### Shift
 
-A shift contains its location, time range, capacity, confirmed count, and
-lifecycle status. Any staff member may sign up for any available shift.
+A shift contains its location, time range, capacity, minimum staffing target,
+confirmed count, and lifecycle status. Any staff member may sign up for any
+available shift. `capacity` is the maximum number of assignments, while
+`minimumStaff` is the coverage target organizers need to meet.
 
 Valid statuses are:
 
@@ -119,7 +123,7 @@ DRAFT -> OPEN -> CLOSED
 A cancelled shift cannot be reopened. Shift times cannot change while
 confirmed signups exist, and capacity cannot be reduced below the confirmed
 count. Only unused draft shifts may be physically deleted; other shifts should
-be cancelled to retain history.
+be cancelled to retain history. `minimumStaff` cannot exceed `capacity`.
 
 ### Signup
 
@@ -142,6 +146,7 @@ All domain endpoints use the `/api/v1` prefix.
 | `GET`    | `/api/v1/volunteers/:volunteerId/signups`      | List a volunteer's signup history        |
 | `POST`   | `/api/v1/shifts`                               | Create a shift                           |
 | `GET`    | `/api/v1/shifts`                               | Filter and paginate shifts               |
+| `GET`    | `/api/v1/shifts/understaffed`                  | List open shifts below minimum staffing  |
 | `GET`    | `/api/v1/shifts/:shiftId`                      | Get one shift                            |
 | `PATCH`  | `/api/v1/shifts/:shiftId`                      | Update a shift or its lifecycle status   |
 | `DELETE` | `/api/v1/shifts/:shiftId`                      | Delete an unused draft shift             |
@@ -202,6 +207,7 @@ curl -X POST http://localhost:3000/api/v1/shifts \
     "startAt":"2027-02-20T14:00:00.000Z",
     "endAt":"2027-02-20T16:00:00.000Z",
     "capacity":4,
+    "minimumStaff":2,
     "status":"OPEN"
   }'
 ```
@@ -213,6 +219,16 @@ defaults to `1`, and `limit` defaults to `20` with a maximum of `100`.
 
 ```text
 GET /api/v1/shifts?status=OPEN&from=2027-02-20T00:00:00.000Z&to=2027-02-21T00:00:00.000Z&page=1&limit=20
+```
+
+### Find understaffed shifts
+
+The report returns future `OPEN` shifts whose confirmed assignments are below
+`minimumStaff`. The largest staffing gaps appear first, and each result includes
+the derived `staffNeeded` count.
+
+```text
+GET /api/v1/shifts/understaffed?page=1&limit=20
 ```
 
 ### Create and cancel a signup
