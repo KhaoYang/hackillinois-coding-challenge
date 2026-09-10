@@ -27,25 +27,21 @@ const statusLabels: Record<ShiftStatus, string> = {
   CANCELLED: "Cancelled",
 };
 
-function Icon({
-  name,
-  size = 18,
-}: {
-  name:
-    | "alert"
-    | "calendar"
-    | "check"
-    | "chevron"
-    | "clock"
-    | "docs"
-    | "map"
-    | "refresh"
-    | "search"
-    | "users"
-    | "x";
-  size?: number;
-}) {
-  const paths: Record<typeof name, React.ReactNode> = {
+type IconName =
+  | "alert"
+  | "calendar"
+  | "check"
+  | "chevron"
+  | "clock"
+  | "docs"
+  | "map"
+  | "refresh"
+  | "search"
+  | "users"
+  | "x";
+
+function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
+  const paths: Record<IconName, React.ReactNode> = {
     alert: (
       <>
         <path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z" />
@@ -94,7 +90,7 @@ function Icon({
       <>
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
         <circle cx="9" cy="7" r="4" />
-        <path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8" />
+        <path d="M22 21v-2a4 4 0 0 1-3-3.9M16 3.1a4 4 0 0 1 0 7.8" />
       </>
     ),
     x: <path d="M18 6 6 18M6 6l12 12" />,
@@ -141,7 +137,11 @@ function formatTimeRange(startAt: string, endAt: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
-  return `${formatter.format(new Date(startAt))} – ${formatter.format(new Date(endAt))}`;
+  return (
+    formatter.format(new Date(startAt)) +
+    " \u2013 " +
+    formatter.format(new Date(endAt))
+  );
 }
 
 function formatLongDate(value: string): string {
@@ -153,7 +153,11 @@ function formatLongDate(value: string): string {
 }
 
 function teamClass(team: StaffTeam): string {
-  return `team-${team.toLowerCase()}`;
+  return "team-" + team.toLowerCase();
+}
+
+function cleanTitle(title: string): string {
+  return title.replace("[DEMO] ", "");
 }
 
 function App() {
@@ -277,34 +281,54 @@ function App() {
   const visibleShifts = shifts.filter(
     (shift) => shiftFilter === "ALL" || shift.status === shiftFilter,
   );
-  const visibleVolunteers = volunteers.filter((volunteer) => {
+  const query = staffSearch.trim().toLowerCase();
+  const matchesStaffFilters = (volunteer: {
+    name: string;
+    email: string;
+    team: StaffTeam;
+  }) => {
     const matchesTeam = teamFilter === "ALL" || volunteer.team === teamFilter;
-    const query = staffSearch.trim().toLowerCase();
     const matchesSearch =
       !query ||
       volunteer.name.toLowerCase().includes(query) ||
       volunteer.email.toLowerCase().includes(query);
     return matchesTeam && matchesSearch;
-  });
+  };
+  const visibleVolunteers = volunteers.filter(matchesStaffFilters);
+  const priorityVolunteers = undercommitted
+    .filter(matchesStaffFilters)
+    .filter((volunteer) => !signedUpIds.has(volunteer.id))
+    .sort((a, b) => b.remainingShiftCount - a.remainingShiftCount);
   const availableVolunteers = volunteers.filter(
     (volunteer) => !signedUpIds.has(volunteer.id),
   );
 
+  const openShiftCount = shifts.filter(
+    (shift) => shift.status === "OPEN",
+  ).length;
   const totalAssignments = shifts.reduce(
     (total, shift) => total + shift.confirmedCount,
     0,
   );
-  async function handleSignup() {
-    if (!selectedShift || !selectedVolunteerId) return;
+  const openCapacity = shifts
+    .filter((shift) => shift.status === "OPEN")
+    .reduce((total, shift) => total + shift.spotsRemaining, 0);
+
+  async function handleSignup(volunteerId = selectedVolunteerId) {
+    if (!selectedShift || !volunteerId) return;
     setSaving(true);
 
     try {
-      await dashboardApi.createSignup(selectedShift.id, selectedVolunteerId);
-      const volunteer = volunteerById.get(selectedVolunteerId);
+      await dashboardApi.createSignup(selectedShift.id, volunteerId);
+      const volunteer = volunteerById.get(volunteerId);
       setToast({
         tone: "success",
         title: "Shift assigned",
-        message: `${volunteer?.name ?? "Staff member"} was added to ${selectedShift.title}.`,
+        message:
+          (volunteer?.name ?? "Staff member") +
+          " was added to " +
+          cleanTitle(selectedShift.title) +
+          ".",
       });
       setSelectedVolunteerId("");
       await Promise.all([loadDashboard(true), loadSignups(selectedShift.id)]);
@@ -331,7 +355,9 @@ function App() {
       setToast({
         tone: "success",
         title: "Assignment removed",
-        message: `${volunteer?.name ?? "Staff member"} is no longer assigned to this shift.`,
+        message:
+          (volunteer?.name ?? "Staff member") +
+          " is no longer assigned to this shift.",
       });
       await Promise.all([loadDashboard(true), loadSignups(signup.shiftId)]);
     } catch (error) {
@@ -345,30 +371,41 @@ function App() {
     }
   }
 
+  const canAssign =
+    selectedShift?.status === "OPEN" &&
+    selectedShift.spotsRemaining > 0 &&
+    !saving;
+
   return (
     <div className="app-shell">
       <header className="topbar">
         <a className="brand" href="#top" aria-label="HackIllinois Staff Ops">
-          <span className="brand-mark">HI</span>
-          <span>
-            <strong>STAFF OPS</strong>
-            <small>HackIllinois</small>
-          </span>
+          <img
+            src="/assets/hackillinois/logo.svg"
+            alt="HackIllinois"
+            width="152"
+            height="50"
+          />
+          <span className="brand-divider" aria-hidden="true" />
+          <span className="product-name">Staff Operations</span>
         </a>
+
         <div className="topbar-actions">
-          <span className={`connection ${apiOnline ? "online" : "offline"}`}>
-            <i /> {apiOnline ? "API connected" : "API offline"}
+          <span className={"connection " + (apiOnline ? "online" : "offline")}>
+            <i aria-hidden="true" />
+            {apiOnline ? "API connected" : "API offline"}
           </span>
           <a
-            className="icon-button docs-button"
+            className="header-button"
             href="http://localhost:3000/api-docs"
             target="_blank"
             rel="noreferrer"
           >
-            <Icon name="docs" /> <span>API docs</span>
+            <Icon name="docs" />
+            <span>API docs</span>
           </a>
           <button
-            className="icon-button"
+            className="header-button icon-only"
             type="button"
             onClick={() => void loadDashboard()}
             aria-label="Refresh dashboard"
@@ -379,93 +416,84 @@ function App() {
       </header>
 
       <main id="top">
-        <section className="hero">
+        <section className="page-intro">
           <div>
-            <p className="eyebrow">EVENT OPERATIONS / SHIFT CONTROL</p>
-            <h1>
-              Keep every moment <em>covered.</em>
-            </h1>
-            <p className="hero-copy">
-              Plan the floor, balance team commitments, and assign staff without
-              scheduling conflicts.
+            <p className="eyebrow">HackIllinois 2026 / Event operations</p>
+            <h1>Shift coverage</h1>
+            <p>
+              Find staffing gaps, review commitments, and assign available staff
+              from one workspace.
             </p>
           </div>
-          <div className="event-chip">
-            <span>LIVE PLAN</span>
-            <strong>HackIllinois Demo</strong>
-            <small>
-              {shifts.filter((shift) => shift.status === "OPEN").length} shifts
-              accepting staff
-            </small>
+          <div className="event-state">
+            <span className="live-dot" aria-hidden="true" />
+            Live demo data
           </div>
         </section>
 
-        <section className="metric-grid" aria-label="Event overview">
-          <article className="metric-card accent-blue">
-            <span className="metric-icon">
-              <Icon name="calendar" />
-            </span>
-            <div>
-              <small>OPEN SHIFTS</small>
-              <strong>
-                {shifts.filter((shift) => shift.status === "OPEN").length}
-              </strong>
-            </div>
-            <p>{shifts.length} total scheduled</p>
-          </article>
-          <article className="metric-card accent-violet">
-            <span className="metric-icon">
-              <Icon name="users" />
-            </span>
-            <div>
-              <small>ASSIGNMENTS</small>
-              <strong>{totalAssignments}</strong>
-            </div>
-            <p>Across all event shifts</p>
-          </article>
-          <article className="metric-card accent-mint">
-            <span className="metric-icon">
-              <Icon name="check" />
-            </span>
-            <div>
-              <small>NEEDS COVERAGE</small>
-              <strong>{understaffedShiftCount}</strong>
-            </div>
-            <p>Open shifts below minimum</p>
-          </article>
-          <article className="metric-card accent-coral">
-            <span className="metric-icon">
+        <section className="overview-strip" aria-label="Operations summary">
+          <article className="summary-item priority">
+            <span className="summary-icon">
               <Icon name="alert" />
             </span>
-            <div>
-              <small>NEEDS SHIFTS</small>
+            <span>
+              <small>Needs coverage</small>
+              <strong>{understaffedShiftCount}</strong>
+            </span>
+            <p>shifts below minimum staffing</p>
+          </article>
+          <article className="summary-item priority">
+            <span className="summary-icon">
+              <Icon name="users" />
+            </span>
+            <span>
+              <small>Needs shifts</small>
               <strong>{undercommitted.length}</strong>
-            </div>
-            <p>Staff below commitment</p>
+            </span>
+            <p>staff below their commitment</p>
+          </article>
+          <article className="summary-item">
+            <span>
+              <small>Open shifts</small>
+              <strong>{openShiftCount}</strong>
+            </span>
+            <p>{openCapacity} assignment spots remain</p>
+          </article>
+          <article className="summary-item">
+            <span>
+              <small>Assignments</small>
+              <strong>{totalAssignments}</strong>
+            </span>
+            <p>confirmed across the event</p>
           </article>
         </section>
 
-        <section className="workspace-grid">
-          <div className="panel shift-panel">
-            <div className="panel-heading">
+        <section
+          className="operations-grid"
+          aria-label="Shift assignment workspace"
+        >
+          <section className="panel shifts-panel">
+            <div className="panel-header">
               <div>
-                <p className="eyebrow">SCHEDULE</p>
+                <p className="eyebrow">Schedule</p>
                 <h2>Event shifts</h2>
               </div>
-              <div className="segmented-control" aria-label="Filter shifts">
-                {(["ALL", "OPEN", "DRAFT", "CLOSED"] as ShiftFilter[]).map(
-                  (status) => (
-                    <button
-                      key={status}
-                      className={shiftFilter === status ? "active" : ""}
-                      onClick={() => setShiftFilter(status)}
-                      type="button"
-                    >
-                      {status === "ALL" ? "All" : statusLabels[status]}
-                    </button>
-                  ),
-                )}
-              </div>
+              <span className="count-label">{visibleShifts.length} shown</span>
+            </div>
+
+            <div className="filter-tabs" aria-label="Filter shifts">
+              {(["ALL", "OPEN", "DRAFT", "CLOSED"] as ShiftFilter[]).map(
+                (status) => (
+                  <button
+                    key={status}
+                    className={shiftFilter === status ? "active" : ""}
+                    onClick={() => setShiftFilter(status)}
+                    type="button"
+                  >
+                    {status === "ALL" ? "All" : statusLabels[status]}
+                  </button>
+                ),
+              )}
             </div>
 
             <div className="shift-list">
@@ -477,9 +505,9 @@ function App() {
                 </>
               ) : visibleShifts.length === 0 ? (
                 <div className="empty-state">
-                  <Icon name="calendar" size={26} />
+                  <Icon name="calendar" size={24} />
                   <strong>No shifts found</strong>
-                  <span>Run npm run seed:demo to load the demo schedule.</span>
+                  <span>Seed the database to load the demo schedule.</span>
                 </div>
               ) : (
                 visibleShifts.map((shift) => {
@@ -492,7 +520,11 @@ function App() {
                     <button
                       key={shift.id}
                       type="button"
-                      className={`shift-row ${selectedShiftId === shift.id ? "selected" : ""}`}
+                      className={
+                        "shift-row " +
+                        (selectedShiftId === shift.id ? "selected" : "") +
+                        (shift.staffNeeded > 0 ? " needs-staff" : "")
+                      }
                       onClick={() => setSelectedShiftId(shift.id)}
                     >
                       <span className="date-tile">
@@ -501,108 +533,152 @@ function App() {
                       </span>
                       <span className="shift-summary">
                         <span className="shift-title-line">
-                          <strong>{shift.title.replace("[DEMO] ", "")}</strong>
+                          <strong>{cleanTitle(shift.title)}</strong>
                           <i
-                            className={`status status-${shift.status.toLowerCase()}`}
+                            className={
+                              "status status-" + shift.status.toLowerCase()
+                            }
                           >
                             {statusLabels[shift.status]}
                           </i>
                         </span>
                         <span className="shift-meta">
-                          <span>
-                            <Icon name="clock" size={15} />
-                            {formatTimeRange(shift.startAt, shift.endAt)}
-                          </span>
-                          <span>
-                            <Icon name="map" size={15} />
-                            {shift.location}
-                          </span>
+                          {formatTimeRange(shift.startAt, shift.endAt)}
+                          <b aria-hidden="true">/</b>
+                          {shift.location}
+                        </span>
+                        <span className="row-progress" aria-hidden="true">
+                          <i style={{ width: fill + "%" }} />
                         </span>
                       </span>
-                      <span className="capacity-mini">
-                        <span>
-                          <strong>{shift.confirmedCount}</strong> /{" "}
-                          {shift.capacity}
-                        </span>
-                        <i>
-                          <b style={{ width: `${fill}%` }} />
-                        </i>
+                      <span
+                        className={
+                          "coverage-count " +
+                          (shift.staffNeeded > 0 ? "warning" : "")
+                        }
+                      >
+                        <strong>
+                          {shift.confirmedCount}/{shift.capacity}
+                        </strong>
                         <small>
                           {shift.staffNeeded > 0
-                            ? `${shift.staffNeeded} needed`
-                            : `${shift.spotsRemaining} open`}
+                            ? shift.staffNeeded + " needed"
+                            : shift.spotsRemaining + " open"}
                         </small>
                       </span>
-                      <Icon name="chevron" size={17} />
+                      <Icon name="chevron" size={16} />
                     </button>
                   );
                 })
               )}
             </div>
-          </div>
+          </section>
 
-          <aside className="panel assignment-panel">
+          <section className="panel assignment-panel">
             {selectedShift ? (
               <>
-                <div className="assignment-hero">
-                  <div className="assignment-topline">
+                <div className="assignment-header">
+                  <div className="assignment-heading">
                     <span
-                      className={`status status-${selectedShift.status.toLowerCase()}`}
+                      className={
+                        "status status-" + selectedShift.status.toLowerCase()
+                      }
                     >
                       {statusLabels[selectedShift.status]}
                     </span>
-                    <span>{selectedShift.spotsRemaining} spots left</span>
+                    <span>
+                      {selectedShift.spotsRemaining} of {selectedShift.capacity}{" "}
+                      spots open
+                    </span>
                   </div>
-                  <h2>{selectedShift.title.replace("[DEMO] ", "")}</h2>
+                  <h2>{cleanTitle(selectedShift.title)}</h2>
                   <p>{selectedShift.description}</p>
-                  <div className="assignment-facts">
-                    <span>
-                      <Icon name="calendar" />
-                      {formatLongDate(selectedShift.startAt)}
+                  <dl className="shift-facts">
+                    <div>
+                      <dt>
+                        <Icon name="calendar" />
+                      </dt>
+                      <dd>{formatLongDate(selectedShift.startAt)}</dd>
+                    </div>
+                    <div>
+                      <dt>
+                        <Icon name="clock" />
+                      </dt>
+                      <dd>
+                        {formatTimeRange(
+                          selectedShift.startAt,
+                          selectedShift.endAt,
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>
+                        <Icon name="map" />
+                      </dt>
+                      <dd>{selectedShift.location}</dd>
+                    </div>
+                  </dl>
+                </div>
+
+                <div className="coverage-block">
+                  <div className="coverage-heading">
+                    <div>
+                      <p className="eyebrow">Coverage</p>
+                      <h3>
+                        {selectedShift.confirmedCount} assigned
+                        <span> / {selectedShift.minimumStaff} minimum</span>
+                      </h3>
+                    </div>
+                    <span
+                      className={
+                        "coverage-badge " +
+                        (selectedShift.staffNeeded > 0 ? "warning" : "good")
+                      }
+                    >
+                      {selectedShift.staffNeeded > 0
+                        ? selectedShift.staffNeeded + " staff needed"
+                        : "Minimum met"}
                     </span>
-                    <span>
-                      <Icon name="clock" />
-                      {formatTimeRange(
-                        selectedShift.startAt,
-                        selectedShift.endAt,
-                      )}
-                    </span>
-                    <span>
-                      <Icon name="map" />
-                      {selectedShift.location}
-                    </span>
+                  </div>
+                  <div className="coverage-meter" aria-hidden="true">
+                    <i
+                      style={{
+                        width:
+                          Math.min(
+                            (selectedShift.confirmedCount /
+                              selectedShift.capacity) *
+                              100,
+                            100,
+                          ) + "%",
+                      }}
+                    />
+                    <b
+                      style={{
+                        left:
+                          Math.min(
+                            (selectedShift.minimumStaff /
+                              selectedShift.capacity) *
+                              100,
+                            100,
+                          ) + "%",
+                      }}
+                    />
+                  </div>
+                  <div className="meter-labels">
+                    <span>0</span>
+                    <span>Capacity {selectedShift.capacity}</span>
                   </div>
                 </div>
 
-                <div className="assignment-body">
-                  <div className="assignment-heading">
-                    <div>
-                      <p className="eyebrow">ASSIGNED STAFF</p>
-                      <h3>
-                        {signups.length} of {selectedShift.capacity} spots
-                      </h3>
-                    </div>
-                    <div className="avatar-stack">
-                      {signups.slice(0, 3).map((signup) => {
-                        const volunteer = volunteerById.get(signup.volunteerId);
-                        return (
-                          <span
-                            key={signup.id}
-                            className={
-                              volunteer ? teamClass(volunteer.team) : ""
-                            }
-                          >
-                            {volunteer ? initials(volunteer.name) : "?"}
-                          </span>
-                        );
-                      })}
-                    </div>
+                <div className="assignees-block">
+                  <div className="section-heading">
+                    <h3>Assigned staff</h3>
+                    <span>{signups.length}</span>
                   </div>
-
                   <div className="assignee-list">
                     {signups.length === 0 ? (
                       <div className="assignee-empty">
-                        No one has claimed this shift yet.
+                        No one is assigned to this shift yet.
                       </div>
                     ) : (
                       signups.map((signup) => {
@@ -610,7 +686,10 @@ function App() {
                         return (
                           <div className="assignee" key={signup.id}>
                             <span
-                              className={`avatar ${volunteer ? teamClass(volunteer.team) : ""}`}
+                              className={
+                                "avatar " +
+                                (volunteer ? teamClass(volunteer.team) : "")
+                              }
                             >
                               {volunteer ? initials(volunteer.name) : "?"}
                             </span>
@@ -628,7 +707,11 @@ function App() {
                               type="button"
                               disabled={saving}
                               onClick={() => void handleCancellation(signup)}
-                              aria-label={`Remove ${volunteer?.name ?? "staff member"}`}
+                              aria-label={
+                                "Remove " +
+                                (volunteer?.name ?? "staff member") +
+                                " from this shift"
+                              }
                             >
                               <Icon name="x" size={16} />
                             </button>
@@ -637,102 +720,180 @@ function App() {
                       })
                     )}
                   </div>
+                </div>
 
-                  <div className="add-assignment">
-                    <label htmlFor="volunteer-select">ADD STAFF MEMBER</label>
+                <div className="manual-assignment">
+                  <label htmlFor="volunteer-select">
+                    Assign another staff member
+                  </label>
+                  <div>
                     <select
                       id="volunteer-select"
                       value={selectedVolunteerId}
                       onChange={(event) =>
                         setSelectedVolunteerId(event.target.value)
                       }
-                      disabled={selectedShift.status !== "OPEN" || saving}
+                      disabled={!canAssign}
                     >
                       <option value="">
-                        Choose from {availableVolunteers.length} available
-                        staff…
+                        Choose from {availableVolunteers.length} available staff
                       </option>
                       {availableVolunteers.map((volunteer) => (
                         <option key={volunteer.id} value={volunteer.id}>
-                          {volunteer.name} · {teamLabels[volunteer.team]}
+                          {volunteer.name} / {teamLabels[volunteer.team]}
                         </option>
                       ))}
                     </select>
                     <button
                       className="primary-button"
                       type="button"
-                      disabled={
-                        !selectedVolunteerId ||
-                        selectedShift.status !== "OPEN" ||
-                        selectedShift.spotsRemaining === 0 ||
-                        saving
-                      }
+                      disabled={!selectedVolunteerId || !canAssign}
                       onClick={() => void handleSignup()}
                     >
-                      {saving ? "Updating…" : "Assign to shift"}
+                      {saving ? "Updating..." : "Assign"}
                     </button>
-                    <small>
-                      The API checks capacity and schedule conflicts before
-                      confirming.
-                    </small>
                   </div>
+                  <small>
+                    Capacity and scheduling conflicts are validated by the API.
+                  </small>
                 </div>
               </>
             ) : (
               <div className="empty-state tall">
-                <Icon name="chevron" size={28} />
+                <Icon name="chevron" size={26} />
                 <strong>Select a shift</strong>
-                <span>Choose a schedule row to manage its assignments.</span>
+                <span>Choose a schedule row to manage its coverage.</span>
               </div>
             )}
+          </section>
+
+          <aside className="panel priority-panel">
+            <div className="panel-header priority-header">
+              <div>
+                <p className="eyebrow">Action queue</p>
+                <h2>Staff needing shifts</h2>
+              </div>
+              <span className="count-label">{priorityVolunteers.length}</span>
+            </div>
+            <p className="panel-intro">
+              Prioritized by the number of remaining commitments. Assigning here
+              adds the staff member to the selected shift.
+            </p>
+
+            <label className="search-box">
+              <Icon name="search" size={17} />
+              <input
+                value={staffSearch}
+                onChange={(event) => setStaffSearch(event.target.value)}
+                placeholder="Search staff"
+                aria-label="Search staff"
+              />
+            </label>
+
+            <div className="team-filters" aria-label="Filter staff by team">
+              <button
+                type="button"
+                className={teamFilter === "ALL" ? "active" : ""}
+                onClick={() => setTeamFilter("ALL")}
+              >
+                All
+              </button>
+              {teams.map((team) => (
+                <button
+                  type="button"
+                  key={team}
+                  className={
+                    (teamFilter === team ? "active " : "") + teamClass(team)
+                  }
+                  onClick={() => setTeamFilter(team)}
+                >
+                  {teamLabels[team]}
+                </button>
+              ))}
+            </div>
+
+            <div className="priority-list">
+              {loading ? (
+                <>
+                  <div className="skeleton person-skeleton" />
+                  <div className="skeleton person-skeleton" />
+                  <div className="skeleton person-skeleton" />
+                </>
+              ) : priorityVolunteers.length === 0 ? (
+                <div className="queue-empty">
+                  <span>
+                    <Icon name="check" />
+                  </span>
+                  <strong>Queue is clear</strong>
+                  <p>No matching staff need another shift.</p>
+                </div>
+              ) : (
+                priorityVolunteers.map((volunteer) => (
+                  <article className="priority-person" key={volunteer.id}>
+                    <span className={"avatar " + teamClass(volunteer.team)}>
+                      {initials(volunteer.name)}
+                    </span>
+                    <div>
+                      <strong>{volunteer.name}</strong>
+                      <span>
+                        {teamLabels[volunteer.team]} /{" "}
+                        {volunteer.confirmedShiftCount} of{" "}
+                        {volunteer.requiredShiftCount}
+                      </span>
+                    </div>
+                    <span className="remaining-count">
+                      <strong>{volunteer.remainingShiftCount}</strong>
+                      <small>left</small>
+                    </span>
+                    <button
+                      type="button"
+                      disabled={!canAssign}
+                      onClick={() => void handleSignup(volunteer.id)}
+                      aria-label={
+                        "Assign " +
+                        volunteer.name +
+                        " to " +
+                        (selectedShift
+                          ? cleanTitle(selectedShift.title)
+                          : "the selected shift")
+                      }
+                    >
+                      Assign
+                    </button>
+                  </article>
+                ))
+              )}
+            </div>
+
+            <div className="queue-context">
+              <Icon name="calendar" size={16} />
+              <span>
+                {selectedShift
+                  ? "Assigning to " + cleanTitle(selectedShift.title)
+                  : "Select a shift to begin assigning"}
+              </span>
+            </div>
           </aside>
         </section>
 
-        <section className="panel staff-panel">
-          <div className="panel-heading staff-heading">
+        <section className="panel directory-panel">
+          <div className="panel-header">
             <div>
-              <p className="eyebrow">TEAM COVERAGE</p>
-              <h2>Staff commitments</h2>
+              <p className="eyebrow">Directory</p>
+              <h2>All staff commitments</h2>
             </div>
-            <div className="staff-tools">
-              <label className="search-box">
-                <Icon name="search" size={17} />
-                <input
-                  value={staffSearch}
-                  onChange={(event) => setStaffSearch(event.target.value)}
-                  placeholder="Search staff"
-                />
-              </label>
-              <div className="team-filters">
-                <button
-                  type="button"
-                  className={teamFilter === "ALL" ? "active" : ""}
-                  onClick={() => setTeamFilter("ALL")}
-                >
-                  All teams
-                </button>
-                {teams.map((team) => (
-                  <button
-                    type="button"
-                    key={team}
-                    className={`${teamFilter === team ? "active" : ""} ${teamClass(team)}`}
-                    onClick={() => setTeamFilter(team)}
-                  >
-                    {teamLabels[team]}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <span className="count-label">
+              {visibleVolunteers.length} staff
+            </span>
           </div>
-
           <div className="staff-table-wrap">
             <table className="staff-table">
               <thead>
                 <tr>
-                  <th>STAFF MEMBER</th>
-                  <th>TEAM</th>
-                  <th>COMMITMENT</th>
-                  <th>STATUS</th>
+                  <th>Staff member</th>
+                  <th>Team</th>
+                  <th>Commitment</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -750,7 +911,7 @@ function App() {
                   return (
                     <tr key={volunteer.id}>
                       <td>
-                        <span className={`avatar ${teamClass(volunteer.team)}`}>
+                        <span className={"avatar " + teamClass(volunteer.team)}>
                           {initials(volunteer.name)}
                         </span>
                         <span>
@@ -760,9 +921,9 @@ function App() {
                       </td>
                       <td>
                         <span
-                          className={`team-pill ${teamClass(volunteer.team)}`}
+                          className={"team-label " + teamClass(volunteer.team)}
                         >
-                          <i />
+                          <i aria-hidden="true" />
                           {teamLabels[volunteer.team]}
                         </span>
                       </td>
@@ -775,7 +936,7 @@ function App() {
                           <i>
                             <b
                               className={gap ? "behind" : "complete"}
-                              style={{ width: `${progress}%` }}
+                              style={{ width: progress + "%" }}
                             />
                           </i>
                         </div>
@@ -808,11 +969,14 @@ function App() {
 
       <footer>
         <span>HackIllinois Staff Operations</span>
-        <span>Live data from the volunteer shift API</span>
+        <span>Volunteer shift API / live data</span>
       </footer>
 
       {toast && (
-        <div className={`toast toast-${toast.tone}`} role="status">
+        <div
+          className={"toast toast-" + toast.tone}
+          role={toast.tone === "error" ? "alert" : "status"}
+        >
           <span>
             <Icon name={toast.tone === "success" ? "check" : "alert"} />
           </span>
