@@ -150,6 +150,7 @@ All domain endpoints use the `/api/v1` prefix.
 | `GET`    | `/api/v1/shifts/:shiftId`                      | Get one shift                            |
 | `PATCH`  | `/api/v1/shifts/:shiftId`                      | Update a shift or its lifecycle status   |
 | `DELETE` | `/api/v1/shifts/:shiftId`                      | Delete an unused draft shift             |
+| `GET`    | `/api/v1/shifts/:shiftId/candidates`           | Rank staff by assignment eligibility     |
 | `POST`   | `/api/v1/shifts/:shiftId/signups`              | Sign a volunteer up                      |
 | `GET`    | `/api/v1/shifts/:shiftId/signups`              | List a shift's signups                   |
 | `DELETE` | `/api/v1/shifts/:shiftId/signups/:volunteerId` | Cancel a volunteer's signup              |
@@ -230,6 +231,17 @@ the derived `staffNeeded` count.
 ```text
 GET /api/v1/shifts/understaffed?page=1&limit=20
 ```
+
+### Find candidates for a shift
+
+```text
+GET /api/v1/shifts/SHIFT_ID/candidates?team=SYSTEMS
+```
+
+The response ranks eligible staff by their remaining commitment and explains
+why other staff cannot be assigned, including existing assignments and schedule
+conflicts. This is a preflight convenience for clients; the signup transaction
+still rechecks shift state, capacity, and overlap rules before writing.
 
 ### Create and cancel a signup
 

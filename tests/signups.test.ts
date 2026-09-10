@@ -1,3 +1,4 @@
+import { Types } from "mongoose";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import app from "../src/app.js";
@@ -163,6 +164,399 @@ describe("Signup routes", () => {
       });
       expect(refreshedShift?.confirmedCount).toBe(capacity);
       expect(confirmedSignups).toBe(capacity);
+    });
+
+    it("allows only one of two concurrent overlapping signups", async () => {
+      const volunteer = await createVolunteer();
+      const firstShift = await createOpenShift({
+        title: "Concurrent First",
+        startAt: hoursFromNow(2),
+        endAt: hoursFromNow(5),
+      });
+      const secondShift = await createOpenShift({
+        title: "Concurrent Second",
+        startAt: hoursFromNow(3),
+        endAt: hoursFromNow(6),
+      });
+      const firstEndpoint =
+        "/api/v1/shifts/" + firstShift._id.toString() + "/signups";
+      const secondEndpoint =
+        "/api/v1/shifts/" + secondShift._id.toString() + "/signups";
+
+      const responses = await Promise.all([
+        request(app)
+          .post(firstEndpoint)
+          .send({ volunteerId: volunteer._id.toString() }),
+        request(app)
+          .post(secondEndpoint)
+          .send({ volunteerId: volunteer._id.toString() }),
+      ]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([
+        201, 409,
+      ]);
+      expect(
+        responses.find((response) => response.status === 409)?.body.error.code,
+      ).toBe("SHIFT_TIME_CONFLICT");
+      expect(
+        await SignupModel.countDocuments({
+          volunteerId: volunteer._id,
+          status: "CONFIRMED",
+        }),
+      ).toBe(1);
+
+      const refreshedShifts = await ShiftModel.find({
+        _id: { $in: [firstShift._id, secondShift._id] },
+      });
+      expect(
+        refreshedShifts.reduce(
+          (total, shift) => total + shift.confirmedCount,
+          0,
+        ),
+      ).toBe(1);
+    });
+
+    it("restores a cancelled signup without creating another document", async () => {
+      const volunteer = await createVolunteer();
+      const shift = await createOpenShift();
+      const collectionEndpoint =
+        "/api/v1/shifts/" + shift._id.toString() + "/signups";
+      const itemEndpoint = collectionEndpoint + "/" + volunteer._id.toString();
+
+      const created = await request(app).post(collectionEndpoint).send({
+        volunteerId: volunteer._id.toString(),
+      });
+      await request(app).delete(itemEndpoint);
+      const restored = await request(app).post(collectionEndpoint).send({
+        volunteerId: volunteer._id.toString(),
+      });
+
+      expect(created.status).toBe(201);
+      expect(restored.status).toBe(200);
+      expect(restored.body.data).toMatchObject({
+        id: created.body.data.id,
+        status: "CONFIRMED",
+      });
+      expect(restored.body.data.cancelledAt).toBeUndefined();
+      expect(
+        await SignupModel.countDocuments({
+          shiftId: shift._id,
+          volunteerId: volunteer._id,
+        }),
+      ).toBe(1);
+      expect((await ShiftModel.findById(shift._id))?.confirmedCount).toBe(1);
+    });
+  });
+
+  describe("GET /api/v1/shifts/:shiftId/candidates", () => {
+    it("ranks eligible staff and explains assignment conflicts", async () => {
+      const targetStart = hoursFromNow(4);
+      const targetEnd = hoursFromNow(6);
+      const targetShift = await createOpenShift({
+        title: "Target Shift",
+        capacity: 8,
+        startAt: targetStart,
+        endAt: targetEnd,
+      });
+      const overlappingShift = await createOpenShift({
+        title: "Overlapping Shift",
+        startAt: new Date(targetStart.getTime() + 60 * 60 * 1_000),
+        endAt: new Date(targetEnd.getTime() + 60 * 60 * 1_000),
+      });
+      const adjacentShift = await createOpenShift({
+        title: "Adjacent Shift",
+        startAt: hoursFromNow(2),
+        endAt: targetStart,
+      });
+      const [highestPriority, adjacent, conflicting, alreadyAssigned] =
+        await VolunteerModel.create([
+          {
+            name: "Highest Priority",
+            email: "highest@example.com",
+            team: "SYSTEMS",
+            requiredShiftCount: 3,
+          },
+          {
+            name: "Adjacent Staff",
+            email: "adjacent@example.com",
+            team: "SYSTEMS",
+            requiredShiftCount: 2,
+          },
+          {
+            name: "Conflicting Staff",
+            email: "conflicting@example.com",
+            team: "SYSTEMS",
+            requiredShiftCount: 2,
+          },
+          {
+            name: "Already Assigned",
+            email: "assigned@example.com",
+            team: "DESIGN",
+            requiredShiftCount: 2,
+          },
+        ]);
+
+      if (!highestPriority || !adjacent || !conflicting || !alreadyAssigned) {
+        throw new Error("Test volunteers were not created");
+      }
+
+      await SignupModel.create([
+        {
+          shiftId: adjacentShift._id,
+          volunteerId: adjacent._id,
+          status: "CONFIRMED",
+        },
+        {
+          shiftId: overlappingShift._id,
+          volunteerId: conflicting._id,
+          status: "CONFIRMED",
+        },
+        {
+          shiftId: targetShift._id,
+          volunteerId: alreadyAssigned._id,
+          status: "CONFIRMED",
+        },
+      ]);
+
+      const endpoint =
+        "/api/v1/shifts/" + targetShift._id.toString() + "/candidates";
+      const response = await request(app).get(endpoint);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data[0]).toMatchObject({
+        id: highestPriority._id.toString(),
+        name: "Highest Priority",
+        confirmedShiftCount: 0,
+        remainingShiftCount: 3,
+        eligibility: "ELIGIBLE",
+      });
+
+      const candidatesByName = Object.fromEntries(
+        response.body.data.map((candidate: { name: string }) => [
+          candidate.name,
+          candidate,
+        ]),
+      );
+      expect(candidatesByName["Adjacent Staff"]).toMatchObject({
+        confirmedShiftCount: 1,
+        remainingShiftCount: 1,
+        eligibility: "ELIGIBLE",
+      });
+      expect(candidatesByName["Conflicting Staff"]).toMatchObject({
+        eligibility: "SCHEDULE_CONFLICT",
+        reason: "Overlaps with Overlapping Shift",
+        conflictingShift: {
+          id: overlappingShift._id.toString(),
+          title: "Overlapping Shift",
+        },
+      });
+      expect(candidatesByName["Already Assigned"]).toMatchObject({
+        eligibility: "ALREADY_ASSIGNED",
+        reason: "Already assigned to this shift",
+      });
+      expect(response.body.pagination).toMatchObject({
+        page: 1,
+        limit: 100,
+        totalItems: 4,
+        totalPages: 1,
+      });
+
+      const filtered = await request(app).get(
+        endpoint + "?team=SYSTEMS&eligibility=ELIGIBLE",
+      );
+
+      expect(filtered.status).toBe(200);
+      expect(
+        filtered.body.data.map((candidate: { name: string }) => candidate.name),
+      ).toEqual(["Highest Priority", "Adjacent Staff"]);
+    });
+
+    it("marks unassigned staff unavailable when the shift is full", async () => {
+      const assigned = await createVolunteer(1);
+      const waiting = await createVolunteer(2);
+      const shift = await createOpenShift({ capacity: 1 });
+      const signupEndpoint =
+        "/api/v1/shifts/" + shift._id.toString() + "/signups";
+
+      await request(app)
+        .post(signupEndpoint)
+        .send({ volunteerId: assigned._id.toString() });
+
+      const response = await request(app).get(
+        "/api/v1/shifts/" + shift._id.toString() + "/candidates",
+      );
+      const candidate = response.body.data.find(
+        (item: { id: string }) => item.id === waiting._id.toString(),
+      );
+
+      expect(response.status).toBe(200);
+      expect(candidate).toMatchObject({
+        eligibility: "SHIFT_FULL",
+        reason: "This shift has reached capacity",
+      });
+    });
+
+    it.each(["DRAFT", "CLOSED", "CANCELLED"] as const)(
+      "marks candidates unavailable when the shift is %s",
+      async (status) => {
+        await createVolunteer();
+        const shift = await createOpenShift();
+        shift.status = status;
+        await shift.save();
+
+        const response = await request(app).get(
+          "/api/v1/shifts/" + shift._id.toString() + "/candidates",
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.body.data[0]).toMatchObject({
+          eligibility: "SHIFT_NOT_OPEN",
+          reason: "This shift is not open for signups",
+        });
+      },
+    );
+
+    it("marks candidates unavailable after the shift has started", async () => {
+      await createVolunteer();
+      const shift = await createOpenShift({
+        startAt: hoursFromNow(-2),
+        endAt: hoursFromNow(-1),
+      });
+
+      const response = await request(app).get(
+        "/api/v1/shifts/" + shift._id.toString() + "/candidates",
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body.data[0]).toMatchObject({
+        eligibility: "SHIFT_ALREADY_STARTED",
+        reason: "This shift has already started",
+      });
+    });
+
+    it("ignores cancelled signups when checking conflicts and commitments", async () => {
+      const targetStart = hoursFromNow(4);
+      const targetShift = await createOpenShift({
+        title: "Target Shift",
+        startAt: targetStart,
+        endAt: hoursFromNow(6),
+      });
+      const overlappingShift = await createOpenShift({
+        title: "Cancelled Assignment",
+        startAt: new Date(targetStart.getTime() + 30 * 60 * 1_000),
+        endAt: hoursFromNow(7),
+      });
+      const volunteer = await VolunteerModel.create({
+        name: "Cancelled Staff",
+        email: "cancelled-staff@example.com",
+        team: "EXPERIENCE",
+        requiredShiftCount: 2,
+      });
+      await SignupModel.create({
+        shiftId: overlappingShift._id,
+        volunteerId: volunteer._id,
+        status: "CANCELLED",
+        cancelledAt: new Date(),
+      });
+
+      const response = await request(app).get(
+        "/api/v1/shifts/" + targetShift._id.toString() + "/candidates",
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body.data[0]).toMatchObject({
+        id: volunteer._id.toString(),
+        confirmedShiftCount: 0,
+        remainingShiftCount: 2,
+        eligibility: "ELIGIBLE",
+      });
+      expect(response.body.data[0].conflictingShift).toBeUndefined();
+    });
+
+    it("ranks undercommitted staff ahead of eligible staff who are complete", async () => {
+      const targetStart = hoursFromNow(4);
+      const targetShift = await createOpenShift({
+        title: "Target Shift",
+        startAt: targetStart,
+        endAt: hoursFromNow(6),
+      });
+      const adjacentShift = await createOpenShift({
+        title: "Earlier Shift",
+        startAt: hoursFromNow(2),
+        endAt: targetStart,
+      });
+      const [undercommitted, complete] = await VolunteerModel.create([
+        {
+          name: "Undercommitted Staff",
+          email: "under-ranked@example.com",
+          team: "OUTREACH",
+          requiredShiftCount: 2,
+        },
+        {
+          name: "Complete Staff",
+          email: "complete-ranked@example.com",
+          team: "OUTREACH",
+          requiredShiftCount: 1,
+        },
+      ]);
+
+      if (!undercommitted || !complete) {
+        throw new Error("Test volunteers were not created");
+      }
+
+      await SignupModel.create({
+        shiftId: adjacentShift._id,
+        volunteerId: complete._id,
+        status: "CONFIRMED",
+      });
+
+      const response = await request(app).get(
+        "/api/v1/shifts/" + targetShift._id.toString() + "/candidates",
+      );
+
+      expect(response.status).toBe(200);
+      expect(
+        response.body.data.map((candidate: { name: string }) => candidate.name),
+      ).toEqual(["Undercommitted Staff", "Complete Staff"]);
+      expect(response.body.data[1]).toMatchObject({
+        eligibility: "ELIGIBLE",
+        remainingShiftCount: 0,
+      });
+    });
+
+    it("paginates candidates and rejects invalid query values", async () => {
+      await Promise.all([
+        createVolunteer(1),
+        createVolunteer(2),
+        createVolunteer(3),
+      ]);
+      const shift = await createOpenShift();
+      const endpoint = "/api/v1/shifts/" + shift._id.toString() + "/candidates";
+
+      const page = await request(app).get(endpoint + "?page=2&limit=2");
+      const invalid = await request(app).get(
+        endpoint + "?eligibility=NOT_A_REAL_STATUS",
+      );
+
+      expect(page.status).toBe(200);
+      expect(page.body.data).toHaveLength(1);
+      expect(page.body.pagination).toEqual({
+        page: 2,
+        limit: 2,
+        totalItems: 3,
+        totalPages: 2,
+      });
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("returns 404 when the target shift does not exist", async () => {
+      const response = await request(app).get(
+        "/api/v1/shifts/" + new Types.ObjectId().toString() + "/candidates",
+      );
+
+      expect(response.status).toBe(404);
+      expect(response.body.error.code).toBe("SHIFT_NOT_FOUND");
     });
   });
 

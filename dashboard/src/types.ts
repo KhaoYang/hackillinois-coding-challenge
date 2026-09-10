@@ -25,6 +25,35 @@ export interface UndercommittedVolunteer {
   remainingShiftCount: number;
 }
 
+export type CandidateEligibility =
+  | "ELIGIBLE"
+  | "SCHEDULE_CONFLICT"
+  | "ALREADY_ASSIGNED"
+  | "SHIFT_NOT_OPEN"
+  | "SHIFT_ALREADY_STARTED"
+  | "SHIFT_FULL";
+
+export interface CandidateConflict {
+  id: string;
+  title: string;
+  startAt: string;
+  endAt: string;
+}
+
+export interface ShiftCandidate {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  team: StaffTeam;
+  requiredShiftCount: number;
+  confirmedShiftCount: number;
+  remainingShiftCount: number;
+  eligibility: CandidateEligibility;
+  reason?: string;
+  conflictingShift?: CandidateConflict;
+}
+
 export interface Shift {
   id: string;
   title: string;

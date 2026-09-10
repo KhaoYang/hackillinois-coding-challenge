@@ -7,7 +7,11 @@ import {
   type SignupDocument,
   type SignupStatus,
 } from "./signup.model.js";
-import type { ListSignupsQuery } from "./signup.schemas.js";
+import type {
+  CandidateEligibility,
+  ListShiftCandidatesQuery,
+  ListSignupsQuery,
+} from "./signup.schemas.js";
 
 export interface SignupResponse {
   id: string;
@@ -27,6 +31,37 @@ export interface SignupResult {
 
 export interface SignupListResponse {
   items: SignupResponse[];
+  pagination: {
+    page: number;
+    limit: number;
+    totalItems: number;
+    totalPages: number;
+  };
+}
+
+export interface CandidateConflictResponse {
+  id: string;
+  title: string;
+  startAt: string;
+  endAt: string;
+}
+
+export interface ShiftCandidateResponse {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  team: import("../volunteers/volunteer.model.js").StaffTeam;
+  requiredShiftCount: number;
+  confirmedShiftCount: number;
+  remainingShiftCount: number;
+  eligibility: CandidateEligibility;
+  reason?: string;
+  conflictingShift?: CandidateConflictResponse;
+}
+
+export interface ShiftCandidateListResponse {
+  items: ShiftCandidateResponse[];
   pagination: {
     page: number;
     limit: number;
@@ -260,6 +295,165 @@ export async function cancelSignup(
       );
     }
   });
+}
+
+export async function listShiftCandidates(
+  shiftId: string,
+  query: ListShiftCandidatesQuery,
+): Promise<ShiftCandidateListResponse> {
+  const shift = await ShiftModel.findById(shiftId).lean();
+
+  if (!shift) {
+    throw new AppError(
+      404,
+      "SHIFT_NOT_FOUND",
+      "The requested shift does not exist",
+    );
+  }
+
+  // Load candidates and assignments in sets. This avoids issuing one
+  // availability query per volunteer as the staff roster grows.
+  const volunteers = await VolunteerModel.find(
+    query.team ? { team: query.team } : {},
+  )
+    .sort({ name: 1, _id: 1 })
+    .lean();
+  const volunteerIds = volunteers.map((volunteer) => volunteer._id);
+  const confirmedSignups = await SignupModel.find({
+    volunteerId: { $in: volunteerIds },
+    status: "CONFIRMED",
+  })
+    .select({ volunteerId: 1, shiftId: 1 })
+    .lean();
+
+  const assignedShiftIds = [
+    ...new Set(confirmedSignups.map((signup) => signup.shiftId.toString())),
+  ].map((assignedShiftId) => new Types.ObjectId(assignedShiftId));
+  const assignedShifts = await ShiftModel.find({
+    _id: { $in: assignedShiftIds },
+    status: { $ne: "CANCELLED" },
+  })
+    .select({ title: 1, startAt: 1, endAt: 1 })
+    .sort({ startAt: 1, _id: 1 })
+    .lean();
+
+  const assignedShiftById = new Map(
+    assignedShifts.map((assignedShift) => [
+      assignedShift._id.toString(),
+      assignedShift,
+    ]),
+  );
+  const signupsByVolunteer = new Map<string, typeof confirmedSignups>();
+
+  for (const signup of confirmedSignups) {
+    const volunteerId = signup.volunteerId.toString();
+    const current = signupsByVolunteer.get(volunteerId) ?? [];
+    current.push(signup);
+    signupsByVolunteer.set(volunteerId, current);
+  }
+
+  const now = new Date();
+  const candidates: ShiftCandidateResponse[] = volunteers.map((volunteer) => {
+    const volunteerSignups =
+      signupsByVolunteer.get(volunteer._id.toString()) ?? [];
+    const confirmedShiftCount = volunteerSignups.length;
+    const remainingShiftCount = Math.max(
+      volunteer.requiredShiftCount - confirmedShiftCount,
+      0,
+    );
+    let eligibility: CandidateEligibility = "ELIGIBLE";
+    let reason: string | undefined;
+    let conflictingShift: CandidateConflictResponse | undefined;
+
+    if (
+      volunteerSignups.some(
+        (signup) => signup.shiftId.toString() === shift._id.toString(),
+      )
+    ) {
+      eligibility = "ALREADY_ASSIGNED";
+      reason = "Already assigned to this shift";
+    } else if (shift.status !== "OPEN") {
+      eligibility = "SHIFT_NOT_OPEN";
+      reason = "This shift is not open for signups";
+    } else if (shift.startAt <= now) {
+      eligibility = "SHIFT_ALREADY_STARTED";
+      reason = "This shift has already started";
+    } else if (shift.confirmedCount >= shift.capacity) {
+      eligibility = "SHIFT_FULL";
+      reason = "This shift has reached capacity";
+    } else {
+      const conflict = volunteerSignups
+        .map((signup) => assignedShiftById.get(signup.shiftId.toString()))
+        .find(
+          (assignedShift) =>
+            assignedShift !== undefined &&
+            assignedShift._id.toString() !== shift._id.toString() &&
+            assignedShift.startAt < shift.endAt &&
+            assignedShift.endAt > shift.startAt,
+        );
+
+      if (conflict) {
+        eligibility = "SCHEDULE_CONFLICT";
+        reason = "Overlaps with " + conflict.title;
+        conflictingShift = {
+          id: conflict._id.toString(),
+          title: conflict.title,
+          startAt: conflict.startAt.toISOString(),
+          endAt: conflict.endAt.toISOString(),
+        };
+      }
+    }
+
+    return {
+      id: volunteer._id.toString(),
+      name: volunteer.name,
+      email: volunteer.email,
+      ...(volunteer.phone != null ? { phone: volunteer.phone } : {}),
+      team: volunteer.team,
+      requiredShiftCount: volunteer.requiredShiftCount,
+      confirmedShiftCount,
+      remainingShiftCount,
+      eligibility,
+      ...(reason ? { reason } : {}),
+      ...(conflictingShift ? { conflictingShift } : {}),
+    };
+  });
+
+  const eligibilityOrder: Record<CandidateEligibility, number> = {
+    ELIGIBLE: 0,
+    SCHEDULE_CONFLICT: 1,
+    ALREADY_ASSIGNED: 2,
+    SHIFT_FULL: 3,
+    SHIFT_NOT_OPEN: 4,
+    SHIFT_ALREADY_STARTED: 5,
+  };
+  const filteredCandidates = query.eligibility
+    ? candidates.filter(
+        (candidate) => candidate.eligibility === query.eligibility,
+      )
+    : candidates;
+
+  filteredCandidates.sort(
+    (first, second) =>
+      eligibilityOrder[first.eligibility] -
+        eligibilityOrder[second.eligibility] ||
+      second.remainingShiftCount - first.remainingShiftCount ||
+      first.name.localeCompare(second.name) ||
+      first.id.localeCompare(second.id),
+  );
+
+  const totalItems = filteredCandidates.length;
+  const skip = (query.page - 1) * query.limit;
+
+  return {
+    items: filteredCandidates.slice(skip, skip + query.limit),
+    pagination: {
+      page: query.page,
+      limit: query.limit,
+      totalItems,
+      totalPages: Math.ceil(totalItems / query.limit),
+    },
+  };
 }
 
 export async function listShiftSignups(

@@ -25,6 +25,9 @@ describe("Application routes", () => {
       expect(response.body.paths).toHaveProperty(
         "/api/v1/shifts/{shiftId}/signups",
       );
+      expect(response.body.paths).toHaveProperty(
+        "/api/v1/shifts/{shiftId}/candidates",
+      );
     });
   });
 

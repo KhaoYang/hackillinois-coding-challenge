@@ -3,6 +3,7 @@ import { ApiError, dashboardApi } from "./api";
 import {
   teams,
   type Shift,
+  type ShiftCandidate,
   type ShiftStatus,
   type Signup,
   type StaffTeam,
@@ -167,12 +168,14 @@ function App() {
   >([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [signups, setSignups] = useState<Signup[]>([]);
+  const [candidates, setCandidates] = useState<ShiftCandidate[]>([]);
   const [selectedShiftId, setSelectedShiftId] = useState("");
   const [selectedVolunteerId, setSelectedVolunteerId] = useState("");
   const [teamFilter, setTeamFilter] = useState<TeamFilter>("ALL");
   const [shiftFilter, setShiftFilter] = useState<ShiftFilter>("ALL");
   const [staffSearch, setStaffSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [apiOnline, setApiOnline] = useState(false);
   const [toast, setToast] = useState<{
@@ -222,14 +225,28 @@ function App() {
     }
   }, []);
 
-  const refreshOperationalData = useCallback(async () => {
-    const [underResponse, shiftResponse] = await Promise.all([
-      dashboardApi.undercommitted(),
-      dashboardApi.shifts(),
-    ]);
+  const refreshOperationalData = useCallback(async (shiftId: string) => {
+    try {
+      const [underResponse, shiftResponse, candidateResponse] =
+        await Promise.all([
+          dashboardApi.undercommitted(),
+          dashboardApi.shifts(),
+          dashboardApi.shiftCandidates(shiftId),
+        ]);
 
-    setUndercommitted(underResponse.data);
-    setShifts(shiftResponse.data);
+      setUndercommitted(underResponse.data);
+      setShifts(shiftResponse.data);
+      setCandidates(candidateResponse.data);
+    } catch (error) {
+      setToast({
+        tone: "error",
+        title: "Change saved; refresh failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Refresh the dashboard to load the latest data",
+      });
+    }
   }, []);
 
   const loadSignups = useCallback(async (shiftId: string) => {
@@ -251,14 +268,39 @@ function App() {
     }
   }, []);
 
+  const loadCandidates = useCallback(async (shiftId: string) => {
+    if (!shiftId) {
+      setCandidates([]);
+      return;
+    }
+
+    setCandidatesLoading(true);
+    try {
+      const response = await dashboardApi.shiftCandidates(shiftId);
+      setCandidates(response.data);
+    } catch (error) {
+      setCandidates([]);
+      setToast({
+        tone: "error",
+        title: "Could not rank staff",
+        message: error instanceof Error ? error.message : "Please try again",
+      });
+    } finally {
+      setCandidatesLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
 
   useEffect(() => {
-    void loadSignups(selectedShiftId);
+    void Promise.all([
+      loadSignups(selectedShiftId),
+      loadCandidates(selectedShiftId),
+    ]);
     setSelectedVolunteerId("");
-  }, [loadSignups, selectedShiftId]);
+  }, [loadCandidates, loadSignups, selectedShiftId]);
 
   useEffect(() => {
     if (!toast) return;
@@ -275,11 +317,6 @@ function App() {
     () => new Map(undercommitted.map((volunteer) => [volunteer.id, volunteer])),
     [undercommitted],
   );
-  const signedUpIds = useMemo(
-    () => new Set(signups.map((signup) => signup.volunteerId)),
-    [signups],
-  );
-
   const visibleShifts = shifts.filter(
     (shift) => shiftFilter === "ALL" || shift.status === shiftFilter,
   );
@@ -297,13 +334,13 @@ function App() {
     return matchesTeam && matchesSearch;
   };
   const visibleVolunteers = volunteers.filter(matchesStaffFilters);
-  const priorityVolunteers = undercommitted
-    .filter(matchesStaffFilters)
-    .filter((volunteer) => !signedUpIds.has(volunteer.id))
-    .sort((a, b) => b.remainingShiftCount - a.remainingShiftCount);
-  const availableVolunteers = volunteers.filter(
-    (volunteer) => !signedUpIds.has(volunteer.id),
+  const visibleCandidates = candidates.filter(matchesStaffFilters);
+  const eligibleCandidates = candidates.filter(
+    (candidate) => candidate.eligibility === "ELIGIBLE",
   );
+  const visibleEligibleCount = visibleCandidates.filter(
+    (candidate) => candidate.eligibility === "ELIGIBLE",
+  ).length;
 
   const openShiftCount = shifts.filter(
     (shift) => shift.status === "OPEN",
@@ -345,7 +382,7 @@ function App() {
           ".",
       });
       setSelectedVolunteerId("");
-      await refreshOperationalData();
+      await refreshOperationalData(selectedShift.id);
     } catch (error) {
       setToast({
         tone: "error",
@@ -376,7 +413,7 @@ function App() {
           (volunteer?.name ?? "Staff member") +
           " is no longer assigned to this shift.",
       });
-      await refreshOperationalData();
+      await refreshOperationalData(signup.shiftId);
     } catch (error) {
       setToast({
         tone: "error",
@@ -753,11 +790,11 @@ function App() {
                       disabled={!canAssign}
                     >
                       <option value="">
-                        Choose from {availableVolunteers.length} available staff
+                        Choose from {eligibleCandidates.length} eligible staff
                       </option>
-                      {availableVolunteers.map((volunteer) => (
-                        <option key={volunteer.id} value={volunteer.id}>
-                          {volunteer.name} / {teamLabels[volunteer.team]}
+                      {eligibleCandidates.map((candidate) => (
+                        <option key={candidate.id} value={candidate.id}>
+                          {candidate.name} / {teamLabels[candidate.team]}
                         </option>
                       ))}
                     </select>
@@ -788,13 +825,15 @@ function App() {
             <div className="panel-header priority-header">
               <div>
                 <p className="eyebrow">Action queue</p>
-                <h2>Staff needing shifts</h2>
+                <h2>Recommended staff</h2>
               </div>
-              <span className="count-label">{priorityVolunteers.length}</span>
+              <span className="count-label">
+                {visibleEligibleCount} eligible
+              </span>
             </div>
             <p className="panel-intro">
-              Prioritized by the number of remaining commitments. Assigning here
-              adds the staff member to the selected shift.
+              Ranked by availability and remaining commitments. Conflicts stay
+              visible so coordinators can understand why someone is unavailable.
             </p>
 
             <label className="search-box">
@@ -830,52 +869,86 @@ function App() {
             </div>
 
             <div className="priority-list">
-              {loading ? (
+              {loading || candidatesLoading ? (
                 <>
                   <div className="skeleton person-skeleton" />
                   <div className="skeleton person-skeleton" />
                   <div className="skeleton person-skeleton" />
                 </>
-              ) : priorityVolunteers.length === 0 ? (
+              ) : visibleCandidates.length === 0 ? (
                 <div className="queue-empty">
                   <span>
                     <Icon name="check" />
                   </span>
-                  <strong>Queue is clear</strong>
-                  <p>No matching staff need another shift.</p>
+                  <strong>No matching candidates</strong>
+                  <p>Try another team or search term.</p>
                 </div>
               ) : (
-                priorityVolunteers.map((volunteer) => (
-                  <article className="priority-person" key={volunteer.id}>
-                    <span className={"avatar " + teamClass(volunteer.team)}>
-                      {initials(volunteer.name)}
+                visibleCandidates.map((candidate) => (
+                  <article
+                    className={
+                      "priority-person " +
+                      (candidate.eligibility === "ELIGIBLE"
+                        ? "eligible"
+                        : "unavailable")
+                    }
+                    key={candidate.id}
+                  >
+                    <span className={"avatar " + teamClass(candidate.team)}>
+                      {initials(candidate.name)}
                     </span>
                     <div>
-                      <strong>{volunteer.name}</strong>
-                      <span>
-                        {teamLabels[volunteer.team]} /{" "}
-                        {volunteer.confirmedShiftCount} of{" "}
-                        {volunteer.requiredShiftCount}
+                      <strong>{candidate.name}</strong>
+                      <span
+                        className={
+                          candidate.eligibility === "ELIGIBLE"
+                            ? ""
+                            : "candidate-reason"
+                        }
+                        title={candidate.reason}
+                      >
+                        {candidate.eligibility === "ELIGIBLE" ? (
+                          <>
+                            {teamLabels[candidate.team]} /{" "}
+                            {candidate.confirmedShiftCount} of{" "}
+                            {candidate.requiredShiftCount}
+                          </>
+                        ) : (
+                          candidate.reason
+                        )}
                       </span>
                     </div>
                     <span className="remaining-count">
-                      <strong>{volunteer.remainingShiftCount}</strong>
-                      <small>left</small>
+                      <strong>{candidate.remainingShiftCount}</strong>
+                      <small>
+                        {candidate.remainingShiftCount === 0 ? "met" : "left"}
+                      </small>
                     </span>
                     <button
                       type="button"
-                      disabled={!canAssign}
-                      onClick={() => void handleSignup(volunteer.id)}
-                      aria-label={
-                        "Assign " +
-                        volunteer.name +
-                        " to " +
-                        (selectedShift
-                          ? cleanTitle(selectedShift.title)
-                          : "the selected shift")
+                      disabled={
+                        !canAssign || candidate.eligibility !== "ELIGIBLE"
                       }
+                      onClick={() => void handleSignup(candidate.id)}
+                      aria-label={
+                        candidate.eligibility === "ELIGIBLE"
+                          ? "Assign " +
+                            candidate.name +
+                            " to " +
+                            (selectedShift
+                              ? cleanTitle(selectedShift.title)
+                              : "the selected shift")
+                          : candidate.reason
+                      }
+                      title={candidate.reason}
                     >
-                      Assign
+                      {candidate.eligibility === "ELIGIBLE"
+                        ? "Assign"
+                        : candidate.eligibility === "ALREADY_ASSIGNED"
+                          ? "Assigned"
+                          : candidate.eligibility === "SCHEDULE_CONFLICT"
+                            ? "Conflict"
+                            : "Unavailable"}
                     </button>
                   </article>
                 ))

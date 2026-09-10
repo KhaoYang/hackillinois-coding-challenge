@@ -6,6 +6,7 @@ import { errorHandler } from "./middleware/error-handler.js";
 import { notFoundHandler } from "./middleware/not-found.js";
 import { requestLogger } from "./middleware/request-logger.js";
 import shiftRouter from "./modules/shifts/shift.routes.js";
+import candidateRouter from "./modules/signups/candidate.routes.js";
 import signupRouter from "./modules/signups/signup.routes.js";
 import volunteerRouter from "./modules/volunteers/volunteer.routes.js";
 // Create and configure the Express application without starting an HTTP server.
@@ -58,6 +59,7 @@ app.use(
 );
 
 app.use("/api/v1/volunteers", volunteerRouter);
+app.use("/api/v1/shifts/:shiftId/candidates", candidateRouter);
 app.use("/api/v1/shifts/:shiftId/signups", signupRouter);
 app.use("/api/v1/shifts", shiftRouter);
 

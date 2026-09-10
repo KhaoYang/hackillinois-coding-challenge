@@ -3,10 +3,12 @@ import { getValidatedRequest } from "../../middleware/validate-request.js";
 import {
   cancelSignupRequest,
   createSignupRequest,
+  listShiftCandidatesRequest,
   listSignupsRequest,
 } from "./signup.schemas.js";
 import {
   cancelSignup,
+  listShiftCandidates,
   listShiftSignups,
   signupVolunteer,
 } from "./signup.service.js";
@@ -28,6 +30,20 @@ export const cancelSignupController: RequestHandler = async (_req, res) => {
 export const listSignupsController: RequestHandler = async (_req, res) => {
   const { params, query } = getValidatedRequest<typeof listSignupsRequest>(res);
   const result = await listShiftSignups(params.shiftId, query);
+
+  res.status(200).json({
+    data: result.items,
+    pagination: result.pagination,
+  });
+};
+
+export const listShiftCandidatesController: RequestHandler = async (
+  _req,
+  res,
+) => {
+  const { params, query } =
+    getValidatedRequest<typeof listShiftCandidatesRequest>(res);
+  const result = await listShiftCandidates(params.shiftId, query);
 
   res.status(200).json({
     data: result.items,

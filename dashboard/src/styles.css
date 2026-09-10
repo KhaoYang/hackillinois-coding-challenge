@@ -970,6 +970,15 @@ main {
   white-space: nowrap;
 }
 
+.priority-person.unavailable {
+  background: #fafafb;
+}
+
+.priority-person > div span.candidate-reason {
+  color: var(--warning);
+  font-weight: 600;
+}
+
 .remaining-count {
   display: grid;
   justify-items: center;
@@ -1003,7 +1012,9 @@ main {
 
 .priority-person > button:disabled {
   cursor: not-allowed;
-  opacity: 0.4;
+  border-color: var(--line);
+  color: var(--muted);
+  background: #f1f2f5;
 }
 
 .queue-empty {

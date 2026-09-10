@@ -1,6 +1,7 @@
 import type {
   ListResponse,
   Shift,
+  ShiftCandidate,
   Signup,
   UndercommittedVolunteer,
   Volunteer,
@@ -66,6 +67,11 @@ export const dashboardApi = {
   shiftSignups: (shiftId: string) =>
     apiRequest<ListResponse<Signup>>(
       `/api/v1/shifts/${shiftId}/signups?status=CONFIRMED&limit=100`,
+    ),
+
+  shiftCandidates: (shiftId: string) =>
+    apiRequest<ListResponse<ShiftCandidate>>(
+      `/api/v1/shifts/${shiftId}/candidates?limit=100`,
     ),
 
   createSignup: (shiftId: string, volunteerId: string) =>

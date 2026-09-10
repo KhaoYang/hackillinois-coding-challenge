@@ -332,6 +332,36 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/shifts/{shiftId}/candidates": {
+      get: {
+        tags: ["Signups"],
+        summary: "Rank staff candidates for a shift",
+        description:
+          "Previews assignment eligibility and commitment priority. The signup operation rechecks every rule transactionally.",
+        parameters: [
+          { $ref: "#/components/parameters/ShiftId" },
+          {
+            name: "team",
+            in: "query",
+            schema: { $ref: "#/components/schemas/StaffTeam" },
+          },
+          {
+            name: "eligibility",
+            in: "query",
+            schema: { $ref: "#/components/schemas/CandidateEligibility" },
+          },
+          ...paginationParameters,
+        ],
+        responses: {
+          "200": jsonResponse(
+            "Candidates ranked by eligibility and remaining commitment.",
+            { $ref: "#/components/schemas/ShiftCandidateListEnvelope" },
+          ),
+          "400": errorResponse("An ID or query parameter is invalid."),
+          "404": errorResponse("The shift does not exist."),
+        },
+      },
+    },
     "/api/v1/shifts/{shiftId}/signups": {
       post: {
         tags: ["Signups"],
@@ -424,6 +454,17 @@ export const openApiDocument = {
       SignupStatus: {
         type: "string",
         enum: ["CONFIRMED", "CANCELLED"],
+      },
+      CandidateEligibility: {
+        type: "string",
+        enum: [
+          "ELIGIBLE",
+          "SCHEDULE_CONFLICT",
+          "ALREADY_ASSIGNED",
+          "SHIFT_NOT_OPEN",
+          "SHIFT_ALREADY_STARTED",
+          "SHIFT_FULL",
+        ],
       },
       CreateVolunteer: {
         type: "object",
@@ -602,6 +643,49 @@ export const openApiDocument = {
           updatedAt: { type: "string", format: "date-time" },
         },
       },
+      CandidateConflict: {
+        type: "object",
+        required: ["id", "title", "startAt", "endAt"],
+        properties: {
+          id: { type: "string", example: objectIdExample },
+          title: { type: "string", example: "Registration Desk" },
+          startAt: { type: "string", format: "date-time" },
+          endAt: { type: "string", format: "date-time" },
+        },
+      },
+      ShiftCandidate: {
+        type: "object",
+        required: [
+          "id",
+          "name",
+          "email",
+          "team",
+          "requiredShiftCount",
+          "confirmedShiftCount",
+          "remainingShiftCount",
+          "eligibility",
+        ],
+        properties: {
+          id: { type: "string", example: objectIdExample },
+          name: { type: "string", example: "Maya Chen" },
+          email: { type: "string", format: "email" },
+          phone: { type: "string" },
+          team: { $ref: "#/components/schemas/StaffTeam" },
+          requiredShiftCount: { type: "integer", example: 3 },
+          confirmedShiftCount: { type: "integer", example: 1 },
+          remainingShiftCount: { type: "integer", example: 2 },
+          eligibility: {
+            $ref: "#/components/schemas/CandidateEligibility",
+          },
+          reason: {
+            type: "string",
+            example: "Overlaps with Registration Desk",
+          },
+          conflictingShift: {
+            $ref: "#/components/schemas/CandidateConflict",
+          },
+        },
+      },
       Pagination: {
         type: "object",
         required: ["page", "limit", "totalItems", "totalPages"],
@@ -672,6 +756,20 @@ export const openApiDocument = {
               data: {
                 type: "array",
                 items: { $ref: "#/components/schemas/Signup" },
+              },
+            },
+          },
+        ],
+      },
+      ShiftCandidateListEnvelope: {
+        allOf: [
+          { $ref: "#/components/schemas/PaginatedEnvelope" },
+          {
+            type: "object",
+            properties: {
+              data: {
+                type: "array",
+                items: { $ref: "#/components/schemas/ShiftCandidate" },
               },
             },
           },
