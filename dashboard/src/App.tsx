@@ -166,7 +166,6 @@ function App() {
     UndercommittedVolunteer[]
   >([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
-  const [understaffedShiftCount, setUnderstaffedShiftCount] = useState(0);
   const [signups, setSignups] = useState<Signup[]>([]);
   const [selectedShiftId, setSelectedShiftId] = useState("");
   const [selectedVolunteerId, setSelectedVolunteerId] = useState("");
@@ -186,25 +185,18 @@ function App() {
     if (!quiet) setLoading(true);
 
     try {
-      const [
-        health,
-        volunteerResponse,
-        underResponse,
-        shiftResponse,
-        understaffedResponse,
-      ] = await Promise.all([
-        dashboardApi.health(),
-        dashboardApi.volunteers(),
-        dashboardApi.undercommitted(),
-        dashboardApi.shifts(),
-        dashboardApi.understaffedShifts(),
-      ]);
+      const [health, volunteerResponse, underResponse, shiftResponse] =
+        await Promise.all([
+          dashboardApi.health(),
+          dashboardApi.volunteers(),
+          dashboardApi.undercommitted(),
+          dashboardApi.shifts(),
+        ]);
 
       setApiOnline(health.data.status === "ok");
       setVolunteers(volunteerResponse.data);
       setUndercommitted(underResponse.data);
       setShifts(shiftResponse.data);
-      setUnderstaffedShiftCount(understaffedResponse.pagination.totalItems);
       setSelectedShiftId((current) => {
         if (shiftResponse.data.some((shift) => shift.id === current)) {
           return current;
@@ -228,6 +220,16 @@ function App() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const refreshOperationalData = useCallback(async () => {
+    const [underResponse, shiftResponse] = await Promise.all([
+      dashboardApi.undercommitted(),
+      dashboardApi.shifts(),
+    ]);
+
+    setUndercommitted(underResponse.data);
+    setShifts(shiftResponse.data);
   }, []);
 
   const loadSignups = useCallback(async (shiftId: string) => {
@@ -313,14 +315,26 @@ function App() {
   const openCapacity = shifts
     .filter((shift) => shift.status === "OPEN")
     .reduce((total, shift) => total + shift.spotsRemaining, 0);
+  const understaffedShiftCount = shifts.filter(
+    (shift) => shift.status === "OPEN" && shift.staffNeeded > 0,
+  ).length;
 
   async function handleSignup(volunteerId = selectedVolunteerId) {
     if (!selectedShift || !volunteerId) return;
     setSaving(true);
 
     try {
-      await dashboardApi.createSignup(selectedShift.id, volunteerId);
+      const response = await dashboardApi.createSignup(
+        selectedShift.id,
+        volunteerId,
+      );
       const volunteer = volunteerById.get(volunteerId);
+      setSignups((current) => [
+        ...current.filter(
+          (signup) => signup.volunteerId !== response.data.volunteerId,
+        ),
+        response.data,
+      ]);
       setToast({
         tone: "success",
         title: "Shift assigned",
@@ -331,7 +345,7 @@ function App() {
           ".",
       });
       setSelectedVolunteerId("");
-      await Promise.all([loadDashboard(true), loadSignups(selectedShift.id)]);
+      await refreshOperationalData();
     } catch (error) {
       setToast({
         tone: "error",
@@ -352,6 +366,9 @@ function App() {
 
     try {
       await dashboardApi.cancelSignup(signup.shiftId, signup.volunteerId);
+      setSignups((current) =>
+        current.filter((currentSignup) => currentSignup.id !== signup.id),
+      );
       setToast({
         tone: "success",
         title: "Assignment removed",
@@ -359,7 +376,7 @@ function App() {
           (volunteer?.name ?? "Staff member") +
           " is no longer assigned to this shift.",
       });
-      await Promise.all([loadDashboard(true), loadSignups(signup.shiftId)]);
+      await refreshOperationalData();
     } catch (error) {
       setToast({
         tone: "error",

@@ -4,6 +4,7 @@ import swaggerUi from "swagger-ui-express";
 import { openApiDocument } from "./docs/openapi.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { notFoundHandler } from "./middleware/not-found.js";
+import { requestLogger } from "./middleware/request-logger.js";
 import shiftRouter from "./modules/shifts/shift.routes.js";
 import signupRouter from "./modules/signups/signup.routes.js";
 import volunteerRouter from "./modules/volunteers/volunteer.routes.js";
@@ -19,6 +20,11 @@ app.disable("x-powered-by");
 // call this API. With no options, all origins are allowed; a production API
 // could replace this with an explicit allowlist.
 app.use(cors());
+
+// Log the HTTP method, URL, status code, and duration for each completed
+// request. Registering this before the body parser also captures malformed
+// JSON responses without logging the potentially sensitive request body.
+app.use(requestLogger);
 
 // Parse requests whose Content-Type is application/json. The parsed value is
 // placed on req.body for later validation by our Zod middleware.
