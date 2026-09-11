@@ -4,6 +4,10 @@ A TypeScript, Express, and MongoDB API for creating volunteer shifts and
 managing capacity-safe signups. Authentication is intentionally outside the
 scope of this coding challenge.
 
+
+## AI Citation
+LLMs were used to write user-defined test cases, generate documentation, write in-line comments, and create the demo UI, as well as general bug and architecture fixes
+
 ## Highlights
 
 - Zod validation for request bodies, parameters, queries, and environment
